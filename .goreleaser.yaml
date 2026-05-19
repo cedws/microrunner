@@ -1,0 +1,42 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+version: 2
+
+checksum:
+  name_template: "checksums.txt"
+
+builds:
+  - main: .
+    goos:
+      - darwin
+    goarch:
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X go.cedwards.xyz/microrunner/pkg/version.version={{ .Version }}
+      - -X go.cedwards.xyz/microrunner/pkg/version.commit={{ .Commit }}
+      - -X go.cedwards.xyz/microrunner/pkg/version.date={{ .Date }}
+
+scoops:
+  - skip_upload: '{{ eq (envOrDefault "REPO_VISIBILITY" "private") "private" }}'
+    repository:
+      name: scoop-bucket
+      owner: '{{ envOrDefault "GITHUB_REPOSITORY_OWNER" "cedws" }}'
+      token: "{{ .Env.GORELEASER_PUSH_TOKEN }}"
+
+homebrew_casks:
+  - skip_upload: '{{ eq (envOrDefault "REPO_VISIBILITY" "private") "private" }}'
+    repository:
+      name: homebrew-tap
+      owner: '{{ envOrDefault "GITHUB_REPOSITORY_OWNER" "cedws" }}'
+      token: "{{ .Env.GORELEASER_PUSH_TOKEN }}"
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/{{ .ProjectName }}"]
+          end
+
+changelog:
+  use: github
