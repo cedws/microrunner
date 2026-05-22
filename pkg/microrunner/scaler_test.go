@@ -17,7 +17,7 @@ func (s *stubScalesetClient) GenerateJitRunnerConfig(context.Context, *scaleset.
 }
 
 func TestScaler(t *testing.T) {
-	tier := tier{
+	vmconfig := vmconfig{
 		label:  scaleset.Label{Name: "test"},
 		cpu:    2,
 		memory: 1,
@@ -28,7 +28,7 @@ func TestScaler(t *testing.T) {
 			&stubScalesetClient{},
 			1,
 			newStubManager(),
-			tier,
+			vmconfig,
 		}
 		scaler.HandleDesiredRunnerCount(t.Context(), 1)
 		assert.Equal(t, 1, scaler.sandboxManager.Count())
@@ -45,7 +45,7 @@ func TestScaler(t *testing.T) {
 			&stubScalesetClient{},
 			1,
 			newStubManager(),
-			tier,
+			vmconfig,
 		}
 		scaler.HandleDesiredRunnerCount(t.Context(), 1)
 		assert.Equal(t, 1, scaler.sandboxManager.Count())
@@ -74,7 +74,7 @@ func TestScaler(t *testing.T) {
 			&stubScalesetClient{},
 			1,
 			newStubManager(),
-			tier,
+			vmconfig,
 		}
 		scaler.HandleDesiredRunnerCount(t.Context(), 1)
 		assert.Equal(t, 1, scaler.sandboxManager.Count())
@@ -89,7 +89,7 @@ func TestScaler(t *testing.T) {
 			&stubScalesetClient{},
 			1,
 			newStubManager(),
-			tier,
+			vmconfig,
 		}
 		scaler.HandleDesiredRunnerCount(t.Context(), 1)
 

@@ -15,15 +15,15 @@ type scaler struct {
 	ssClient       scalesetClient
 	scaleSetID     int
 	sandboxManager *sandboxManager
-	tier           tier
+	vmconfig       vmconfig
 }
 
-func newScaler(ssClient scalesetClient, scaleSetID int, tier tier) *scaler {
+func newScaler(ssClient scalesetClient, scaleSetID int, vmconfig vmconfig) *scaler {
 	return &scaler{
 		ssClient:       ssClient,
 		scaleSetID:     scaleSetID,
 		sandboxManager: newMSBManager(ssClient, scaleSetID),
-		tier:           tier,
+		vmconfig:       vmconfig,
 	}
 }
 
@@ -63,11 +63,11 @@ func (s *scaler) HandleDesiredRunnerCount(ctx context.Context, desiredCount int)
 			}
 
 			_, err = s.sandboxManager.Spawn(ctx, sandboxConfig{
-				CPU:       uint8(s.tier.cpu),
-				MemoryMiB: uint32(s.tier.memory * 1024),
-				Image:     s.tier.image,
-				Prefix:    s.tier.label.Name,
-				Labels:    []string{s.tier.label.Name},
+				CPU:       uint8(s.vmconfig.cpu),
+				MemoryMiB: uint32(s.vmconfig.memory * 1024),
+				Image:     s.vmconfig.image,
+				Prefix:    s.vmconfig.label.Name,
+				Labels:    []string{s.vmconfig.label.Name},
 				Env: map[string]string{
 					"ACTIONS_RUNNER_INPUT_JITCONFIG": jitRunnerConfig.EncodedJITConfig,
 				},
