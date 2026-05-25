@@ -27,6 +27,12 @@ func TestRunnerManager(t *testing.T) {
 		assert.NotZero(t, name)
 		assert.Equal(t, 1, manager.Count())
 
+		t.Run("has metrics", func(t *testing.T) {
+			metrics := manager.Metrics(t.Context())
+			assert.Equal(t, 1, len(metrics))
+			assert.NotZero(t, metrics[name].CPUPercent)
+		})
+
 		t.Run("then destroys a sandbox", func(t *testing.T) {
 			err := manager.Destroy(t.Context(), name)
 			assert.NoError(t, err)

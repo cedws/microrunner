@@ -4,10 +4,14 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
+	"time"
 
 	"github.com/actions/scaleset"
 	"github.com/actions/scaleset/listener"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	msb "github.com/superradcompany/microsandbox/sdk/go"
 	"go.cedwards.xyz/microrunner/pkg/version"
 	"golang.org/x/sync/errgroup"
@@ -36,8 +40,8 @@ func (c Config) Validate() error {
 }
 
 func Start(ctx context.Context, config Config) error {
-	if err := msb.EnsureInstalled(ctx); err != nil {
-		return err
+	if err := msbPreflight(ctx); err != nil {
+		return fmt.Errorf("msb preflight check failed: %w", err)
 	}
 
 	if err := config.Validate(); err != nil {
@@ -68,7 +72,48 @@ func Start(ctx context.Context, config Config) error {
 		})
 	}
 
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", promhttp.HandlerFor(prometheus.DefaultGatherer, promhttp.HandlerOpts{
+		Registry: prometheus.DefaultRegisterer,
+	}))
+
+	errGroup.Go(func() error {
+		srv := &http.Server{Addr: ":8080", Handler: mux}
+
+		errCh := make(chan error, 1)
+		go func() { errCh <- srv.ListenAndServe() }()
+
+		select {
+		case <-ctx.Done():
+			return srv.Shutdown(context.Background())
+		case err := <-errCh:
+			return err
+		}
+	})
+
 	return errGroup.Wait()
+}
+
+func msbPreflight(ctx context.Context) error {
+	if err := msb.EnsureInstalled(ctx); err != nil {
+		return err
+	}
+
+	opts := []msb.SandboxOption{
+		msb.WithCPUs(1),
+		msb.WithImage("alpine"),
+		msb.WithMaxDuration(10 * time.Second),
+		msb.WithMemory(128),
+		msb.WithReplace(),
+	}
+	sandbox, err := msb.CreateSandbox(ctx, "microrunner", opts...)
+	if err != nil {
+		return err
+	}
+	if err := sandbox.Kill(ctx); err != nil {
+		return err
+	}
+	return msb.RemoveSandbox(ctx, "microrunner")
 }
 
 func createScaleSet(ctx context.Context, ssClient *scaleset.Client, config Config, vmconfig vmconfig) error {

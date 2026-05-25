@@ -2,6 +2,7 @@ package microrunner
 
 import (
 	"context"
+	"sync"
 	"testing"
 
 	"github.com/actions/scaleset"
@@ -16,20 +17,27 @@ func (s *stubScalesetClient) GenerateJitRunnerConfig(context.Context, *scaleset.
 	}, nil
 }
 
-func TestScaler(t *testing.T) {
-	vmconfig := vmconfig{
-		label:  scaleset.Label{Name: "test"},
-		cpu:    2,
-		memory: 1,
+var vm = vmconfig{
+	label:  scaleset.Label{Name: "test"},
+	cpu:    2,
+	memory: 1,
+}
+
+func newStubScaler() *scaler {
+	return &scaler{
+		&stubScalesetClient{},
+		1,
+		newStubManager(),
+		vm,
+		make(chan struct{}),
+		&sync.Once{},
 	}
+}
+
+func TestScaler(t *testing.T) {
 
 	t.Run("handles desired runner count increase", func(t *testing.T) {
-		scaler := scaler{
-			&stubScalesetClient{},
-			1,
-			newStubManager(),
-			vmconfig,
-		}
+		scaler := newStubScaler()
 		scaler.HandleDesiredRunnerCount(t.Context(), 1)
 		assert.Equal(t, 1, scaler.sandboxManager.Count())
 
@@ -41,12 +49,7 @@ func TestScaler(t *testing.T) {
 	})
 
 	t.Run("handles job complete", func(t *testing.T) {
-		scaler := scaler{
-			&stubScalesetClient{},
-			1,
-			newStubManager(),
-			vmconfig,
-		}
+		scaler := newStubScaler()
 		scaler.HandleDesiredRunnerCount(t.Context(), 1)
 		assert.Equal(t, 1, scaler.sandboxManager.Count())
 
@@ -70,12 +73,7 @@ func TestScaler(t *testing.T) {
 	})
 
 	t.Run("handles shutdown", func(t *testing.T) {
-		scaler := scaler{
-			&stubScalesetClient{},
-			1,
-			newStubManager(),
-			vmconfig,
-		}
+		scaler := newStubScaler()
 		scaler.HandleDesiredRunnerCount(t.Context(), 1)
 		assert.Equal(t, 1, scaler.sandboxManager.Count())
 
@@ -85,12 +83,7 @@ func TestScaler(t *testing.T) {
 	})
 
 	t.Run("spawns with jit config", func(t *testing.T) {
-		scaler := scaler{
-			&stubScalesetClient{},
-			1,
-			newStubManager(),
-			vmconfig,
-		}
+		scaler := newStubScaler()
 		scaler.HandleDesiredRunnerCount(t.Context(), 1)
 
 		for name := range scaler.sandboxManager.sandboxes.Iter() {

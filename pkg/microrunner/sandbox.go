@@ -31,6 +31,11 @@ type sandbox interface {
 	Stop(ctx context.Context) error
 	Remove(ctx context.Context) error
 	Kill(ctx context.Context) error
+	Metrics(ctx context.Context) (*Metrics, error)
+}
+
+type Metrics struct {
+	*msb.Metrics
 }
 
 type msbBackend struct{}
@@ -74,7 +79,23 @@ func (b *msbBackend) CreateSandbox(ctx context.Context, name string, config sand
 }
 
 func (b *msbBackend) GetSandbox(ctx context.Context, name string) (sandbox, error) {
-	return msb.GetSandbox(ctx, name)
+	s, err := msb.GetSandbox(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	return &msbSandbox{SandboxHandle: s}, nil
+}
+
+type msbSandbox struct {
+	*msb.SandboxHandle
+}
+
+func (s *msbSandbox) Metrics(ctx context.Context) (*Metrics, error) {
+	m, err := s.SandboxHandle.Metrics(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &Metrics{m}, nil
 }
 
 type stubBackend struct {
@@ -117,6 +138,21 @@ func (s *stubSandbox) Kill(ctx context.Context) error {
 	return nil
 }
 
+func (s *stubSandbox) Metrics(ctx context.Context) (*Metrics, error) {
+	return &Metrics{
+		Metrics: &msb.Metrics{
+			CPUPercent:       25.0 + float64(s.config.CPU)*2,
+			MemoryBytes:      uint64(s.config.MemoryMiB) / 2 * 1024 * 1024,
+			MemoryLimitBytes: uint64(s.config.MemoryMiB) * 1024 * 1024,
+			DiskReadBytes:    4096,
+			DiskWriteBytes:   2048,
+			NetRxBytes:       8192,
+			NetTxBytes:       16384,
+			Uptime:           5 * time.Minute,
+		},
+	}, nil
+}
+
 func newMSBManager(scalesetClient scalesetClient, scaleSetID int) *sandboxManager {
 	return &sandboxManager{
 		backend:        &msbBackend{},
@@ -134,6 +170,24 @@ type sandboxManager struct {
 	sandboxes      syncMap[string, struct{}]
 	scalesetClient scalesetClient
 	scaleSetID     int
+}
+
+func (m *sandboxManager) Metrics(ctx context.Context) map[string]*Metrics {
+	result := make(map[string]*Metrics, m.sandboxes.Len())
+
+	for name := range m.sandboxes.Iter() {
+		sandbox, err := m.backend.GetSandbox(ctx, name)
+		if err != nil {
+			continue
+		}
+		metrics, err := sandbox.Metrics(ctx)
+		if err != nil {
+			continue
+		}
+		result[name] = metrics
+	}
+
+	return result
 }
 
 func (s *sandboxManager) Count() int {

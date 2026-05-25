@@ -3,10 +3,13 @@ package microrunner
 import (
 	"context"
 	"log/slog"
+	"sync"
+	"time"
 
 	"github.com/actions/scaleset"
 	"github.com/actions/scaleset/listener"
 	"github.com/google/uuid"
+	"go.cedwards.xyz/microrunner/pkg/metrics"
 )
 
 var _ listener.Scaler = (*scaler)(nil)
@@ -16,19 +19,73 @@ type scaler struct {
 	scaleSetID     int
 	sandboxManager *sandboxManager
 	vmconfig       vmconfig
+	doneCh         chan struct{}
+	closeOnce      *sync.Once
 }
 
 func newScaler(ssClient scalesetClient, scaleSetID int, vmconfig vmconfig) *scaler {
-	return &scaler{
+	s := &scaler{
 		ssClient:       ssClient,
 		scaleSetID:     scaleSetID,
 		sandboxManager: newMSBManager(ssClient, scaleSetID),
 		vmconfig:       vmconfig,
+		doneCh:         make(chan struct{}),
+		closeOnce:      &sync.Once{},
+	}
+
+	ticker := time.NewTicker(time.Second)
+
+	go func() {
+		for {
+			select {
+			case <-ticker.C:
+				s.updateMetrics(context.Background())
+			case <-s.doneCh:
+				return
+			}
+		}
+	}()
+
+	return s
+}
+
+func (s *scaler) updateMetrics(ctx context.Context) {
+	for name, m := range s.sandboxManager.Metrics(ctx) {
+		metrics.SandboxCPUPercent.
+			WithLabelValues(name).
+			Set(m.CPUPercent)
+		metrics.SandboxMemoryBytes.
+			WithLabelValues(name).
+			Set(float64(m.MemoryBytes))
+		metrics.SandboxMemoryLimitBytes.
+			WithLabelValues(name).
+			Set(float64(m.MemoryLimitBytes))
+		metrics.SandboxDiskReadBytes.
+			WithLabelValues(name).
+			Set(float64(m.DiskReadBytes))
+		metrics.SandboxDiskWriteBytes.
+			WithLabelValues(name).
+			Set(float64(m.DiskWriteBytes))
+		metrics.SandboxNetRxBytes.
+			WithLabelValues(name).
+			Set(float64(m.NetRxBytes))
+		metrics.SandboxNetTxBytes.
+			WithLabelValues(name).
+			Set(float64(m.NetTxBytes))
+		metrics.SandboxUptimeMs.
+			WithLabelValues(name).
+			Set(float64(m.Uptime.Milliseconds()))
+		metrics.SandboxTimestampMs.
+			WithLabelValues(name).
+			Set(float64(time.Now().UnixMilli()))
 	}
 }
 
 func (s *scaler) Shutdown(ctx context.Context) error {
 	slog.Info("shutting down", "runners", s.sandboxManager.Count())
+	s.closeOnce.Do(func() {
+		close(s.doneCh)
+	})
 	return s.sandboxManager.Shutdown(ctx)
 }
 
