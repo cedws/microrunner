@@ -43,6 +43,7 @@ func Start(ctx context.Context, config Config) error {
 	if err := msbPreflight(ctx); err != nil {
 		return fmt.Errorf("msb preflight check failed: %w", err)
 	}
+	slog.Info("sandbox preflight check passed")
 
 	if err := config.Validate(); err != nil {
 		return err
@@ -110,9 +111,13 @@ func msbPreflight(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if err := sandbox.Kill(ctx); err != nil {
+	if _, err := sandbox.StopAndWait(ctx); err != nil {
 		return err
 	}
+	if err := sandbox.Close(); err != nil {
+		return err
+	}
+
 	return msb.RemoveSandbox(ctx, "microrunner")
 }
 

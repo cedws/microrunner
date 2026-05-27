@@ -1,6 +1,7 @@
 package microrunner
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/alecthomas/assert/v2"
@@ -19,6 +20,7 @@ func TestRunnerManager(t *testing.T) {
 		assert.Zero(t, manager.Count())
 
 		name, err := manager.Spawn(t.Context(), sandboxConfig{
+			Name:      "test-runner",
 			CPU:       1,
 			MemoryMiB: 1024,
 			Image:     "alpine",
@@ -43,8 +45,9 @@ func TestRunnerManager(t *testing.T) {
 	t.Run("shutdown destroys all sandboxes", func(t *testing.T) {
 		manager := newStubManager()
 
-		for range 3 {
+		for i := range 3 {
 			_, err := manager.Spawn(t.Context(), sandboxConfig{
+				Name:      fmt.Sprintf("test-runner-%d", i),
 				CPU:       1,
 				MemoryMiB: 512,
 				Image:     "alpine",

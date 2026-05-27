@@ -2,6 +2,7 @@ package microrunner
 
 import (
 	"context"
+	"log/slog"
 	"sync"
 	"testing"
 
@@ -29,6 +30,10 @@ func newStubScaler() *scaler {
 		1,
 		newStubManager(),
 		vm,
+		slog.With(slog.Group("scaleset",
+			"label", vm.label.Name,
+			"id", 1,
+		)),
 		make(chan struct{}),
 		&sync.Once{},
 	}

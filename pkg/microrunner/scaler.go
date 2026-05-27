@@ -19,6 +19,7 @@ type scaler struct {
 	scaleSetID     int
 	sandboxManager *sandboxManager
 	vmconfig       vmconfig
+	log            *slog.Logger
 	doneCh         chan struct{}
 	closeOnce      *sync.Once
 }
@@ -29,8 +30,12 @@ func newScaler(ssClient scalesetClient, scaleSetID int, vmconfig vmconfig) *scal
 		scaleSetID:     scaleSetID,
 		sandboxManager: newMSBManager(ssClient, scaleSetID),
 		vmconfig:       vmconfig,
-		doneCh:         make(chan struct{}),
-		closeOnce:      &sync.Once{},
+		log: slog.With(slog.Group("scaleset",
+			"label", vmconfig.label.Name,
+			"id", scaleSetID,
+		)),
+		doneCh:    make(chan struct{}),
+		closeOnce: &sync.Once{},
 	}
 
 	ticker := time.NewTicker(time.Second)
@@ -82,7 +87,7 @@ func (s *scaler) updateMetrics(ctx context.Context) {
 }
 
 func (s *scaler) Shutdown(ctx context.Context) error {
-	slog.Info("shutting down", "runners", s.sandboxManager.Count())
+	s.log.Info("shutting down", "runners", s.sandboxManager.Count())
 	s.closeOnce.Do(func() {
 		close(s.doneCh)
 	})
@@ -90,25 +95,27 @@ func (s *scaler) Shutdown(ctx context.Context) error {
 }
 
 func (s *scaler) HandleJobStarted(ctx context.Context, jobInfo *scaleset.JobStarted) error {
-	slog.Info("job started", "runner_name", jobInfo.RunnerName)
+	s.log.Info("job started", "runner_name", jobInfo.RunnerName)
 	return nil
 }
 
 func (s *scaler) HandleJobCompleted(ctx context.Context, jobInfo *scaleset.JobCompleted) error {
-	slog.Info("job completed", "runner_name", jobInfo.RunnerName)
+	s.log.Info("job completed", "runner_name", jobInfo.RunnerName)
 	return s.sandboxManager.Destroy(ctx, jobInfo.RunnerName)
 }
 
 func (s *scaler) HandleDesiredRunnerCount(ctx context.Context, desiredCount int) (int, error) {
 	count := s.sandboxManager.Count()
 
-	slog.Info("received desired runner count event", "runners", count, "desired_runners", desiredCount)
+	s.log.Debug("received desired runner count event", "current_runners", count, "desired_runners", desiredCount)
 
 	switch {
 	case count == desiredCount:
 		return desiredCount, nil
 	case count < desiredCount:
 		add := desiredCount - count
+
+		s.log.Info("received scale up request", "current_runners", count, "desired_runners", desiredCount)
 
 		for range add {
 			name := uuid.New().String()
@@ -120,6 +127,7 @@ func (s *scaler) HandleDesiredRunnerCount(ctx context.Context, desiredCount int)
 			}
 
 			_, err = s.sandboxManager.Spawn(ctx, sandboxConfig{
+				Name:      name,
 				CPU:       uint8(s.vmconfig.cpu),
 				MemoryMiB: uint32(s.vmconfig.memory * 1024),
 				Image:     s.vmconfig.image,
@@ -133,7 +141,7 @@ func (s *scaler) HandleDesiredRunnerCount(ctx context.Context, desiredCount int)
 				return s.sandboxManager.Count(), err
 			}
 
-			slog.Info("spawned sandbox", "runners", s.sandboxManager.Count(), "desired_runners", desiredCount)
+			s.log.Info("spawned sandbox", "runners", s.sandboxManager.Count(), "desired_runners", desiredCount)
 		}
 
 		return s.sandboxManager.Count(), nil

@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/actions/scaleset"
-	"github.com/google/uuid"
 	msb "github.com/superradcompany/microsandbox/sdk/go"
 )
 
@@ -14,6 +13,7 @@ var _ sandboxBackend = (*msbBackend)(nil)
 var _ sandboxBackend = (*stubBackend)(nil)
 
 type sandboxConfig struct {
+	Name      string
 	CPU       uint8
 	MemoryMiB uint32
 	Image     string
@@ -30,7 +30,6 @@ type sandboxBackend interface {
 type sandbox interface {
 	Stop(ctx context.Context) error
 	Remove(ctx context.Context) error
-	Kill(ctx context.Context) error
 	Metrics(ctx context.Context) (*Metrics, error)
 }
 
@@ -79,11 +78,11 @@ func (b *msbBackend) CreateSandbox(ctx context.Context, name string, config sand
 }
 
 func (b *msbBackend) GetSandbox(ctx context.Context, name string) (sandbox, error) {
-	s, err := msb.GetSandbox(ctx, name)
+	sandbox, err := msb.GetSandbox(ctx, name)
 	if err != nil {
 		return nil, err
 	}
-	return &msbSandbox{SandboxHandle: s}, nil
+	return &msbSandbox{SandboxHandle: sandbox}, nil
 }
 
 type msbSandbox struct {
@@ -110,7 +109,7 @@ func (b *stubBackend) CreateSandbox(ctx context.Context, name string, config san
 func (b *stubBackend) GetSandbox(ctx context.Context, name string) (sandbox, error) {
 	config, ok := b.sandboxes.Load(name)
 	if !ok {
-		return nil, fmt.Errorf("sandbox %q not found", name)
+		return nil, fmt.Errorf("sandbox %s not found", name)
 	}
 	return &stubSandbox{
 		config: config,
@@ -131,10 +130,6 @@ func (s *stubSandbox) Stop(ctx context.Context) error {
 
 func (s *stubSandbox) Remove(ctx context.Context) error {
 	s.deleteFunc()
-	return nil
-}
-
-func (s *stubSandbox) Kill(ctx context.Context) error {
 	return nil
 }
 
@@ -205,10 +200,9 @@ func (s *sandboxManager) Shutdown(ctx context.Context) error {
 }
 
 func (s *sandboxManager) Spawn(ctx context.Context, config sandboxConfig) (string, error) {
-	// name := fmt.Sprintf("%s-%s", config.Prefix, uuid.New())
-	name := uuid.New().String()
+	name := config.Name
 
-	if err := s.backend.CreateSandbox(ctx, name, config); err != nil {
+	if err := s.backend.CreateSandbox(ctx, config.Name, config); err != nil {
 		return "", err
 	}
 	s.sandboxes.Store(name, struct{}{})
@@ -228,10 +222,9 @@ func (s *sandboxManager) Destroy(ctx context.Context, name string) error {
 
 	defer s.sandboxes.Delete(name)
 
-	if sandbox.Kill(ctx) != nil {
+	if err := sandbox.Stop(ctx); err != nil {
 		return err
 	}
-
 	if err := sandbox.Remove(ctx); err != nil {
 		return err
 	}
