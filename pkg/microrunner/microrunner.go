@@ -92,26 +92,36 @@ func Start(ctx context.Context, config Config) error {
 		})
 	}
 
-	mux := http.NewServeMux()
-	mux.Handle("/metrics", promhttp.HandlerFor(prometheus.DefaultGatherer, promhttp.HandlerOpts{
-		Registry: prometheus.DefaultRegisterer,
-	}))
-
 	errGroup.Go(func() error {
-		srv := &http.Server{Addr: ":8080", Handler: mux}
-
-		errCh := make(chan error, 1)
-		go func() { errCh <- srv.ListenAndServe() }()
-
-		select {
-		case <-ctx.Done():
-			return srv.Shutdown(context.Background())
-		case err := <-errCh:
-			return err
-		}
+		return startMetricsServer(ctx)
 	})
 
 	return errGroup.Wait()
+}
+
+func startMetricsServer(ctx context.Context) error {
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", promhttp.HandlerFor(
+		prometheus.DefaultGatherer,
+		promhttp.HandlerOpts{
+			Registry: prometheus.DefaultRegisterer,
+		},
+	))
+
+	srv := &http.Server{
+		Addr:    ":8080",
+		Handler: mux,
+	}
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- srv.ListenAndServe() }()
+
+	select {
+	case <-ctx.Done():
+		return srv.Shutdown(context.Background())
+	case err := <-errCh:
+		return err
+	}
 }
 
 func msbPreflight(ctx context.Context) error {
@@ -168,11 +178,14 @@ func createScaleSet(ctx context.Context, ssClient *scaleset.Client, config Confi
 		listenerLogger = slog.Default()
 	}
 
-	listener, err := listener.New(sessionClient, listener.Config{
+	scaler := newScaler(ssClient, sset, vmconfig)
+
+	listenerConfig := listener.Config{
 		ScaleSetID: sset.ID,
 		MaxRunners: max(config.MaxRunners, 0),
 		Logger:     listenerLogger,
-	})
+	}
+	listener, err := listener.New(sessionClient, listenerConfig, listener.WithMetricsRecorder(scaler.metricsRecorder))
 	if err != nil {
 		return err
 	}
@@ -186,8 +199,9 @@ func createScaleSet(ctx context.Context, ssClient *scaleset.Client, config Confi
 		}
 	}()
 	defer sessionClient.Close(context.Background())
+	defer scaler.Shutdown(context.Background())
 
-	return listener.Run(ctx, newScaler(ssClient, sset.ID, vmconfig))
+	return listener.Run(ctx, scaler)
 }
 
 type vmconfig struct {

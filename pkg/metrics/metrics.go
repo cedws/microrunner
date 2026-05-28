@@ -42,4 +42,32 @@ var (
 		Name: "sandbox_timestamp_ms",
 		Help: "Timestamp of the last metrics observation in milliseconds.",
 	}, []string{"name"})
+	ScaleSetTotalAvailableJobs = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "scaleset_total_available_jobs",
+		Help: "Current total available jobs for the scale set.",
+	}, []string{"name"})
+	ScaleSetTotalAcquiredJobs = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "scaleset_total_acquired_jobs",
+		Help: "Current total acquired jobs for the scale set.",
+	}, []string{"name"})
+	ScaleSetTotalAssignedJobs = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "scaleset_total_assigned_jobs",
+		Help: "Current total assigned jobs for the scale set.",
+	}, []string{"name"})
+	ScaleSetTotalRunningJobs = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "scaleset_total_running_jobs",
+		Help: "Current total running jobs for the scale set.",
+	}, []string{"name"})
+	ScaleSetTotalRegisteredRunners = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "scaleset_total_registered_runners",
+		Help: "Current total registered runners for the scale set.",
+	}, []string{"name"})
+	ScaleSetTotalBusyRunners = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "scaleset_total_busy_runners",
+		Help: "Current total busy runners for the scale set.",
+	}, []string{"name"})
+	ScaleSetTotalIdleRunners = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "scaleset_total_idle_runners",
+		Help: "Current total idle runners for the scale set.",
+	}, []string{"name"})
 )

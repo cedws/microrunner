@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
@@ -15,44 +14,59 @@ import (
 	"go.cedwards.xyz/microrunner/pkg/metrics"
 )
 
-var defaultDomains = []string{
-	"github.com",
-	"api.github.com",
-	"*.actions.githubusercontent.com",
-	"codeload.github.com",
-	"results-receiver.actions.githubusercontent.com",
-	"*.blob.core.windows.net",
-	"objects.githubusercontent.com",
-	"objects-origin.githubusercontent.com",
-	"github-releases.githubusercontent.com",
-	"github-registry-files.githubusercontent.com",
-	"*.pkg.github.com",
-	"pkg-containers.githubusercontent.com",
-	"ghcr.io",
-	"github-cloud.githubusercontent.com",
-	"github-cloud.s3.amazonaws.com",
-	"dependabot-actions.githubapp.com",
-	"release-assets.githubusercontent.com",
-	"api.snapcraft.io",
+type sandboxMetricsRecorder struct{}
+
+func (r *sandboxMetricsRecorder) Record(name string, sandboxMetrics *Metrics) {
+	metrics.SandboxCPUPercent.
+		WithLabelValues(name).
+		Set(sandboxMetrics.CPUPercent)
+	metrics.SandboxMemoryBytes.
+		WithLabelValues(name).
+		Set(float64(sandboxMetrics.MemoryBytes))
+	metrics.SandboxMemoryLimitBytes.
+		WithLabelValues(name).
+		Set(float64(sandboxMetrics.MemoryLimitBytes))
+	metrics.SandboxDiskReadBytes.
+		WithLabelValues(name).
+		Set(float64(sandboxMetrics.DiskReadBytes))
+	metrics.SandboxDiskWriteBytes.
+		WithLabelValues(name).
+		Set(float64(sandboxMetrics.DiskWriteBytes))
+	metrics.SandboxNetRxBytes.
+		WithLabelValues(name).
+		Set(float64(sandboxMetrics.NetRxBytes))
+	metrics.SandboxNetTxBytes.
+		WithLabelValues(name).
+		Set(float64(sandboxMetrics.NetTxBytes))
+	metrics.SandboxUptimeMs.
+		WithLabelValues(name).
+		Set(float64(sandboxMetrics.Uptime.Milliseconds()))
+	metrics.SandboxTimestampMs.
+		WithLabelValues(name).
+		Set(float64(time.Now().UnixMilli()))
 }
 
-func makePolicyRules() []msb.PolicyRule {
-	var rules []msb.PolicyRule
-
-	for _, d := range defaultDomains {
-		rules = append(rules, msb.PolicyRule{
-			Action:      msb.PolicyActionAllow,
-			Direction:   msb.PolicyDirectionEgress,
-			Destination: strings.TrimPrefix(d, "*"),
-			Port:        "443",
-		})
-	}
-
-	return rules
+func (r *sandboxMetricsRecorder) Delete(name string) {
+	metrics.SandboxCPUPercent.DeleteLabelValues(name)
+	metrics.SandboxMemoryBytes.DeleteLabelValues(name)
+	metrics.SandboxMemoryLimitBytes.DeleteLabelValues(name)
+	metrics.SandboxDiskReadBytes.DeleteLabelValues(name)
+	metrics.SandboxDiskWriteBytes.DeleteLabelValues(name)
+	metrics.SandboxNetRxBytes.DeleteLabelValues(name)
+	metrics.SandboxNetTxBytes.DeleteLabelValues(name)
+	metrics.SandboxUptimeMs.DeleteLabelValues(name)
+	metrics.SandboxTimestampMs.DeleteLabelValues(name)
 }
 
-var _ sandboxBackend = (*msbBackend)(nil)
-var _ sandboxBackend = (*stubBackend)(nil)
+var (
+	_ sandboxBackend = (*msbBackend)(nil)
+	_ sandboxBackend = (*stubBackend)(nil)
+)
+
+type sandboxExit struct {
+	err        error
+	execOutput *msb.ExecOutput
+}
 
 type sandboxConfig struct {
 	Name      string
@@ -67,11 +81,6 @@ type sandboxConfig struct {
 type sandboxBackend interface {
 	CreateSandbox(ctx context.Context, name string, config sandboxConfig) (<-chan sandboxExit, error)
 	GetSandbox(ctx context.Context, name string) (sandbox, error)
-}
-
-type sandboxExit struct {
-	err        error
-	execOutput *msb.ExecOutput
 }
 
 type sandbox interface {
@@ -196,11 +205,12 @@ func (s *stubSandbox) Metrics(ctx context.Context) (*Metrics, error) {
 
 func newMSBManager(scalesetClient scalesetClient, scaleSetID int) *sandboxManager {
 	m := &sandboxManager{
-		backend:        &msbBackend{},
-		scalesetClient: scalesetClient,
-		scaleSetID:     scaleSetID,
-		doneCh:         make(chan struct{}),
-		closeOnce:      &sync.Once{},
+		backend:         &msbBackend{},
+		scalesetClient:  scalesetClient,
+		scaleSetID:      scaleSetID,
+		metricsRecorder: &sandboxMetricsRecorder{},
+		doneCh:          make(chan struct{}),
+		closeOnce:       &sync.Once{},
 	}
 	go m.startMetrics()
 
@@ -212,12 +222,13 @@ type scalesetClient interface {
 }
 
 type sandboxManager struct {
-	backend        sandboxBackend
-	sandboxes      syncMap[string, struct{}]
-	scalesetClient scalesetClient
-	scaleSetID     int
-	doneCh         chan struct{}
-	closeOnce      *sync.Once
+	backend         sandboxBackend
+	sandboxes       syncMap[string, struct{}]
+	scalesetClient  scalesetClient
+	scaleSetID      int
+	metricsRecorder *sandboxMetricsRecorder
+	doneCh          chan struct{}
+	closeOnce       *sync.Once
 }
 
 func (m *sandboxManager) Metrics(ctx context.Context) map[string]*Metrics {
@@ -236,38 +247,6 @@ func (m *sandboxManager) Metrics(ctx context.Context) map[string]*Metrics {
 	}
 
 	return result
-}
-
-func (m *sandboxManager) UpdateMetrics(ctx context.Context) {
-	for name, sandboxMetrics := range m.Metrics(ctx) {
-		metrics.SandboxCPUPercent.
-			WithLabelValues(name).
-			Set(sandboxMetrics.CPUPercent)
-		metrics.SandboxMemoryBytes.
-			WithLabelValues(name).
-			Set(float64(sandboxMetrics.MemoryBytes))
-		metrics.SandboxMemoryLimitBytes.
-			WithLabelValues(name).
-			Set(float64(sandboxMetrics.MemoryLimitBytes))
-		metrics.SandboxDiskReadBytes.
-			WithLabelValues(name).
-			Set(float64(sandboxMetrics.DiskReadBytes))
-		metrics.SandboxDiskWriteBytes.
-			WithLabelValues(name).
-			Set(float64(sandboxMetrics.DiskWriteBytes))
-		metrics.SandboxNetRxBytes.
-			WithLabelValues(name).
-			Set(float64(sandboxMetrics.NetRxBytes))
-		metrics.SandboxNetTxBytes.
-			WithLabelValues(name).
-			Set(float64(sandboxMetrics.NetTxBytes))
-		metrics.SandboxUptimeMs.
-			WithLabelValues(name).
-			Set(float64(sandboxMetrics.Uptime.Milliseconds()))
-		metrics.SandboxTimestampMs.
-			WithLabelValues(name).
-			Set(float64(time.Now().UnixMilli()))
-	}
 }
 
 func (s *sandboxManager) Count() int {
@@ -326,22 +305,16 @@ func (s *sandboxManager) Destroy(ctx context.Context, name string) error {
 	s.sandboxes.Delete(name)
 
 	time.AfterFunc(30*time.Second, func() {
-		s.destroyMetrics(name)
+		s.metricsRecorder.Delete(name)
 	})
 
 	return nil
 }
 
-func (m *sandboxManager) destroyMetrics(name string) {
-	metrics.SandboxCPUPercent.DeleteLabelValues(name)
-	metrics.SandboxMemoryBytes.DeleteLabelValues(name)
-	metrics.SandboxMemoryLimitBytes.DeleteLabelValues(name)
-	metrics.SandboxDiskReadBytes.DeleteLabelValues(name)
-	metrics.SandboxDiskWriteBytes.DeleteLabelValues(name)
-	metrics.SandboxNetRxBytes.DeleteLabelValues(name)
-	metrics.SandboxNetTxBytes.DeleteLabelValues(name)
-	metrics.SandboxUptimeMs.DeleteLabelValues(name)
-	metrics.SandboxTimestampMs.DeleteLabelValues(name)
+func (m *sandboxManager) updateMetrics(ctx context.Context) {
+	for name, sandboxMetrics := range m.Metrics(ctx) {
+		m.metricsRecorder.Record(name, sandboxMetrics)
+	}
 }
 
 func (m *sandboxManager) startMetrics() {
@@ -351,7 +324,7 @@ func (m *sandboxManager) startMetrics() {
 	for {
 		select {
 		case <-ticker.C:
-			m.UpdateMetrics(context.Background())
+			m.updateMetrics(context.Background())
 		case <-m.doneCh:
 			return
 		}
@@ -366,10 +339,12 @@ func (s *sandboxManager) supervise(name string, exitCh <-chan sandboxExit) {
 	slog.Info("sandbox process exited", "runner_name", name, "error", exit.err, "exit_code", exit.execOutput.ExitCode())
 
 	if err := flushExecOutput(logsDir(), name, exit.execOutput); err != nil {
+		slog.Error("failed to flush logs for sandbox", "name", name, "error", err)
 		return
 	}
 
 	if _, ok := s.sandboxes.Load(name); !ok {
+		slog.Warn("sandbox missing unexpectedly", "name", name)
 		return
 	}
 

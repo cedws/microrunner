@@ -7,6 +7,8 @@ import (
 
 	"github.com/actions/scaleset"
 	"github.com/alecthomas/assert/v2"
+	"github.com/prometheus/client_golang/prometheus/testutil"
+	"go.cedwards.xyz/microrunner/pkg/metrics"
 )
 
 type stubScalesetClient struct{}
@@ -27,10 +29,14 @@ func newStubScaler(t *testing.T) *scaler {
 	t.Helper()
 
 	return &scaler{
+		sset:           &scaleset.RunnerScaleSet{ID: 1},
 		ssClient:       &stubScalesetClient{},
-		scaleSetID:     1,
+		ssID:           1,
 		sandboxManager: newStubManager(t),
-		vmconfig:       vm,
+		metricsRecorder: &scalesetMetricsRecorder{
+			name: vm.label.Name,
+		},
+		vmconfig: vm,
 		log: slog.With(slog.Group("scaleset",
 			"label", vm.label.Name,
 			"id", 1,
@@ -93,5 +99,29 @@ func TestScaler(t *testing.T) {
 			assert.NoError(t, err)
 			assert.Equal(t, "123_456_789", sandbox.(*stubSandbox).config.Env["ACTIONS_RUNNER_INPUT_JITCONFIG"])
 		}
+	})
+
+	t.Run("records scaleset statistics", func(t *testing.T) {
+		scaler := newStubScaler(t)
+
+		scaler.metricsRecorder.RecordStatistics(&scaleset.RunnerScaleSetStatistic{
+			TotalAvailableJobs:     1,
+			TotalAcquiredJobs:      2,
+			TotalAssignedJobs:      3,
+			TotalRunningJobs:       4,
+			TotalRegisteredRunners: 5,
+			TotalBusyRunners:       6,
+			TotalIdleRunners:       7,
+		})
+
+		assert.Equal(t, float64(1), testutil.ToFloat64(metrics.ScaleSetTotalAvailableJobs.WithLabelValues(vm.label.Name)))
+		assert.Equal(t, float64(2), testutil.ToFloat64(metrics.ScaleSetTotalAcquiredJobs.WithLabelValues(vm.label.Name)))
+		assert.Equal(t, float64(3), testutil.ToFloat64(metrics.ScaleSetTotalAssignedJobs.WithLabelValues(vm.label.Name)))
+		assert.Equal(t, float64(4), testutil.ToFloat64(metrics.ScaleSetTotalRunningJobs.WithLabelValues(vm.label.Name)))
+		assert.Equal(t, float64(5), testutil.ToFloat64(metrics.ScaleSetTotalRegisteredRunners.WithLabelValues(vm.label.Name)))
+		assert.Equal(t, float64(6), testutil.ToFloat64(metrics.ScaleSetTotalBusyRunners.WithLabelValues(vm.label.Name)))
+		assert.Equal(t, float64(7), testutil.ToFloat64(metrics.ScaleSetTotalIdleRunners.WithLabelValues(vm.label.Name)))
+
+		scaler.metricsRecorder.Delete()
 	})
 }

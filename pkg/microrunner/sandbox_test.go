@@ -8,6 +8,9 @@ import (
 	"time"
 
 	"github.com/alecthomas/assert/v2"
+	"github.com/prometheus/client_golang/prometheus/testutil"
+	msb "github.com/superradcompany/microsandbox/sdk/go"
+	"go.cedwards.xyz/microrunner/pkg/metrics"
 )
 
 func newStubManager(t *testing.T) *sandboxManager {
@@ -91,6 +94,7 @@ func TestRunnerManager(t *testing.T) {
 	t.Run("supervises exited sandbox", func(t *testing.T) {
 		manager := newStubManager(t)
 		backend := manager.backend.(*stubBackend)
+		t.Setenv("XDG_STATE_HOME", t.TempDir())
 
 		name, err := manager.Spawn(t.Context(), sandboxConfig{
 			Name:      "test-runner",
@@ -101,7 +105,7 @@ func TestRunnerManager(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, 1, manager.Count())
 
-		backend.exitCh <- sandboxExit{}
+		backend.exitCh <- sandboxExit{execOutput: &msb.ExecOutput{}}
 
 		deadline := time.After(time.Second)
 		ticker := time.NewTicker(10 * time.Millisecond)
@@ -142,4 +146,36 @@ func TestFlushExecOutput(t *testing.T) {
 
 	_, err = os.Stat(filepath.Join(dir, "test", "stderr.txt"))
 	assert.NoError(t, err)
+}
+
+func TestSandboxMetricsRecorder(t *testing.T) {
+	t.Parallel()
+
+	recorder := &sandboxMetricsRecorder{}
+	sandboxMetrics := &Metrics{
+		Metrics: &msb.Metrics{
+			CPUPercent:       27,
+			MemoryBytes:      1024,
+			MemoryLimitBytes: 2048,
+			DiskReadBytes:    4096,
+			DiskWriteBytes:   8192,
+			NetRxBytes:       16384,
+			NetTxBytes:       32768,
+			Uptime:           5 * time.Second,
+		},
+	}
+
+	recorder.Record("test-recorder", sandboxMetrics)
+
+	assert.Equal(t, float64(27), testutil.ToFloat64(metrics.SandboxCPUPercent.WithLabelValues("test-recorder")))
+	assert.Equal(t, float64(1024), testutil.ToFloat64(metrics.SandboxMemoryBytes.WithLabelValues("test-recorder")))
+	assert.Equal(t, float64(2048), testutil.ToFloat64(metrics.SandboxMemoryLimitBytes.WithLabelValues("test-recorder")))
+	assert.Equal(t, float64(4096), testutil.ToFloat64(metrics.SandboxDiskReadBytes.WithLabelValues("test-recorder")))
+	assert.Equal(t, float64(8192), testutil.ToFloat64(metrics.SandboxDiskWriteBytes.WithLabelValues("test-recorder")))
+	assert.Equal(t, float64(16384), testutil.ToFloat64(metrics.SandboxNetRxBytes.WithLabelValues("test-recorder")))
+	assert.Equal(t, float64(32768), testutil.ToFloat64(metrics.SandboxNetTxBytes.WithLabelValues("test-recorder")))
+	assert.Equal(t, float64(5000), testutil.ToFloat64(metrics.SandboxUptimeMs.WithLabelValues("test-recorder")))
+	assert.NotZero(t, testutil.ToFloat64(metrics.SandboxTimestampMs.WithLabelValues("test-recorder")))
+
+	recorder.Delete("test-recorder")
 }
