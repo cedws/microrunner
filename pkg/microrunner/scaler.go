@@ -79,7 +79,8 @@ func (s *scaler) HandleDesiredRunnerCount(ctx context.Context, desiredCount int)
 				Prefix:    s.vmconfig.label.Name,
 				Labels:    []string{s.vmconfig.label.Name},
 				Env: map[string]string{
-					"ACTIONS_RUNNER_INPUT_JITCONFIG": jitRunnerConfig.EncodedJITConfig,
+					"ACTIONS_RUNNER_INPUT_JITCONFIG":     jitRunnerConfig.EncodedJITConfig,
+					"ACTIONS_RUNNER_PRINT_LOG_TO_STDOUT": "true",
 				},
 			})
 			if err != nil {
