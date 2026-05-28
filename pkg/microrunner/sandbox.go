@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -68,8 +70,8 @@ type sandboxBackend interface {
 }
 
 type sandboxExit struct {
-	ExitCode int
-	Err      error
+	err        error
+	execOutput *msb.ExecOutput
 }
 
 type sandbox interface {
@@ -109,11 +111,10 @@ func (b *msbBackend) CreateSandbox(ctx context.Context, name string, config sand
 
 	exitCh := make(chan sandboxExit, 1)
 	go func() {
-		code, err := stream.Wait(context.Background())
-		if err != nil {
-			exitCh <- sandboxExit{ExitCode: -1, Err: err}
-		} else {
-			exitCh <- sandboxExit{ExitCode: code}
+		output, err := stream.Collect(context.Background())
+		exitCh <- sandboxExit{
+			err:        err,
+			execOutput: output,
 		}
 		close(exitCh)
 	}()
@@ -362,21 +363,63 @@ func (s *sandboxManager) supervise(name string, exitCh <-chan sandboxExit) {
 	if !ok {
 		return
 	}
-	if _, ok := s.sandboxes.Load(name); !ok {
+	slog.Info("sandbox process exited", "runner_name", name, "error", exit.err, "exit_code", exit.execOutput.ExitCode())
+
+	if err := flushExecOutput(logsDir(), name, exit.execOutput); err != nil {
 		return
 	}
 
-	log := slog.With("runner_name", name, "exit_code", exit.ExitCode)
-	if exit.Err != nil {
-		log.Warn("sandbox process exited", "error", exit.Err)
-	} else {
-		log.Info("sandbox process exited")
+	if _, ok := s.sandboxes.Load(name); !ok {
+		return
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	if err := s.Destroy(ctx, name); err != nil {
-		log.Warn("failed to destroy exited sandbox", "error", err)
+		slog.Warn("failed to destroy exited sandbox", "error", err)
 	}
+}
+
+type execOutput interface {
+	StdoutBytes() []byte
+	StderrBytes() []byte
+}
+
+func flushExecOutput(dir string, name string, output execOutput) error {
+	var (
+		sandboxLogsDir = filepath.Join(dir, name)
+		stdoutPath     = filepath.Join(sandboxLogsDir, "stdout.txt")
+		stderrPath     = filepath.Join(sandboxLogsDir, "stderr.txt")
+	)
+
+	if err := os.MkdirAll(sandboxLogsDir, 0o755); err != nil {
+		return err
+	}
+
+	stdoutFile, err := os.Create(stdoutPath)
+	if err != nil {
+		return err
+	}
+	defer stdoutFile.Close()
+
+	stderrFile, err := os.Create(stderrPath)
+	if err != nil {
+		return err
+	}
+	defer stderrFile.Close()
+
+	var (
+		stdout = output.StdoutBytes()
+		stderr = output.StderrBytes()
+	)
+
+	if _, err := stdoutFile.Write(stdout); err != nil {
+		return err
+	}
+	if _, err := stderrFile.Write(stderr); err != nil {
+		return err
+	}
+
+	return nil
 }

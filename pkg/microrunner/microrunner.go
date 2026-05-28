@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/actions/scaleset"
@@ -16,6 +17,20 @@ import (
 	"go.cedwards.xyz/microrunner/pkg/version"
 	"golang.org/x/sync/errgroup"
 )
+
+func logsDir() string {
+	path := os.Getenv("XDG_STATE_HOME")
+	if path != "" {
+		return filepath.Join(path, "microrunner")
+	}
+
+	dir, err := os.UserHomeDir()
+	if err != nil {
+		dir = os.TempDir()
+	}
+
+	return filepath.Join(dir, ".local", "state", "microrunner")
+}
 
 type LabelMatrix struct {
 	CPU       []int

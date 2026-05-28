@@ -2,6 +2,8 @@ package microrunner
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -99,7 +101,7 @@ func TestRunnerManager(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, 1, manager.Count())
 
-		backend.exitCh <- sandboxExit{ExitCode: 1}
+		backend.exitCh <- sandboxExit{}
 
 		deadline := time.After(time.Second)
 		ticker := time.NewTicker(10 * time.Millisecond)
@@ -113,4 +115,31 @@ func TestRunnerManager(t *testing.T) {
 			}
 		}
 	})
+}
+
+type mockExecOutput struct{}
+
+func (mockExecOutput) StdoutBytes() []byte {
+	return []byte("stdout")
+}
+
+func (mockExecOutput) StderrBytes() []byte {
+	return []byte("stderr")
+}
+
+func TestFlushExecOutput(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+
+	output := mockExecOutput{}
+
+	err := flushExecOutput(dir, "test", output)
+	assert.NoError(t, err)
+
+	_, err = os.Stat(filepath.Join(dir, "test", "stdout.txt"))
+	assert.NoError(t, err)
+
+	_, err = os.Stat(filepath.Join(dir, "test", "stderr.txt"))
+	assert.NoError(t, err)
 }
