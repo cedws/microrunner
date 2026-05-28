@@ -162,12 +162,12 @@ func createScaleSet(ctx context.Context, ssClient *scaleset.Client, config Confi
 		return err
 	}
 
-	slog.Info("starting scaleset", "label", vmconfig.label.Name, "scale_set_id", sset.ID)
+	slog.Info("starting scaleset", "label", vmconfig.label.Name, "id", sset.ID)
 
 	defer func() {
-		slog.Info("stopping scaleset", "label", vmconfig.label.Name, "scale_set_id", sset.ID)
+		slog.Info("stopping scaleset", "label", vmconfig.label.Name, "id", sset.ID)
 		if err := ssClient.DeleteRunnerScaleSet(context.Background(), sset.ID); err != nil {
-			slog.Error("failed to delete runner scale set", "scale_set_id", sset.ID, "error", err)
+			slog.Error("failed to delete runner scale set", "id", sset.ID, "error", err)
 		}
 	}()
 	defer sessionClient.Close(context.Background())

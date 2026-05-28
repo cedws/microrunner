@@ -3,13 +3,10 @@ package microrunner
 import (
 	"context"
 	"log/slog"
-	"sync"
-	"time"
 
 	"github.com/actions/scaleset"
 	"github.com/actions/scaleset/listener"
 	"github.com/google/uuid"
-	"go.cedwards.xyz/microrunner/pkg/metrics"
 )
 
 var _ listener.Scaler = (*scaler)(nil)
@@ -20,8 +17,6 @@ type scaler struct {
 	sandboxManager *sandboxManager
 	vmconfig       vmconfig
 	log            *slog.Logger
-	doneCh         chan struct{}
-	closeOnce      *sync.Once
 }
 
 func newScaler(ssClient scalesetClient, scaleSetID int, vmconfig vmconfig) *scaler {
@@ -34,63 +29,13 @@ func newScaler(ssClient scalesetClient, scaleSetID int, vmconfig vmconfig) *scal
 			"label", vmconfig.label.Name,
 			"id", scaleSetID,
 		)),
-		doneCh:    make(chan struct{}),
-		closeOnce: &sync.Once{},
 	}
-
-	ticker := time.NewTicker(time.Second)
-
-	go func() {
-		for {
-			select {
-			case <-ticker.C:
-				s.updateMetrics(context.Background())
-			case <-s.doneCh:
-				return
-			}
-		}
-	}()
 
 	return s
 }
 
-func (s *scaler) updateMetrics(ctx context.Context) {
-	for name, m := range s.sandboxManager.Metrics(ctx) {
-		metrics.SandboxCPUPercent.
-			WithLabelValues(name).
-			Set(m.CPUPercent)
-		metrics.SandboxMemoryBytes.
-			WithLabelValues(name).
-			Set(float64(m.MemoryBytes))
-		metrics.SandboxMemoryLimitBytes.
-			WithLabelValues(name).
-			Set(float64(m.MemoryLimitBytes))
-		metrics.SandboxDiskReadBytes.
-			WithLabelValues(name).
-			Set(float64(m.DiskReadBytes))
-		metrics.SandboxDiskWriteBytes.
-			WithLabelValues(name).
-			Set(float64(m.DiskWriteBytes))
-		metrics.SandboxNetRxBytes.
-			WithLabelValues(name).
-			Set(float64(m.NetRxBytes))
-		metrics.SandboxNetTxBytes.
-			WithLabelValues(name).
-			Set(float64(m.NetTxBytes))
-		metrics.SandboxUptimeMs.
-			WithLabelValues(name).
-			Set(float64(m.Uptime.Milliseconds()))
-		metrics.SandboxTimestampMs.
-			WithLabelValues(name).
-			Set(float64(time.Now().UnixMilli()))
-	}
-}
-
 func (s *scaler) Shutdown(ctx context.Context) error {
 	s.log.Info("shutting down", "runners", s.sandboxManager.Count())
-	s.closeOnce.Do(func() {
-		close(s.doneCh)
-	})
 	return s.sandboxManager.Shutdown(ctx)
 }
 
@@ -101,7 +46,7 @@ func (s *scaler) HandleJobStarted(ctx context.Context, jobInfo *scaleset.JobStar
 
 func (s *scaler) HandleJobCompleted(ctx context.Context, jobInfo *scaleset.JobCompleted) error {
 	s.log.Info("job completed", "runner_name", jobInfo.RunnerName)
-	return s.sandboxManager.Destroy(ctx, jobInfo.RunnerName)
+	return nil
 }
 
 func (s *scaler) HandleDesiredRunnerCount(ctx context.Context, desiredCount int) (int, error) {

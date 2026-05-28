@@ -3,11 +3,14 @@ package microrunner
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/actions/scaleset"
 	msb "github.com/superradcompany/microsandbox/sdk/go"
+	"go.cedwards.xyz/microrunner/pkg/metrics"
 )
 
 var defaultDomains = []string{
@@ -60,8 +63,13 @@ type sandboxConfig struct {
 }
 
 type sandboxBackend interface {
-	CreateSandbox(ctx context.Context, name string, config sandboxConfig) error
+	CreateSandbox(ctx context.Context, name string, config sandboxConfig) (<-chan sandboxExit, error)
 	GetSandbox(ctx context.Context, name string) (sandbox, error)
+}
+
+type sandboxExit struct {
+	ExitCode int
+	Err      error
 }
 
 type sandbox interface {
@@ -76,7 +84,7 @@ type Metrics struct {
 
 type msbBackend struct{}
 
-func (b *msbBackend) CreateSandbox(ctx context.Context, name string, config sandboxConfig) error {
+func (b *msbBackend) CreateSandbox(ctx context.Context, name string, config sandboxConfig) (<-chan sandboxExit, error) {
 	opts := []msb.SandboxOption{
 		msb.WithCPUs(config.CPU),
 		msb.WithMemory(config.MemoryMiB),
@@ -91,32 +99,26 @@ func (b *msbBackend) CreateSandbox(ctx context.Context, name string, config sand
 
 	sandbox, err := msb.CreateSandbox(ctx, name, opts...)
 	if err != nil {
-		return fmt.Errorf("failed to create sandbox: %w", err)
+		return nil, fmt.Errorf("failed to create sandbox: %w", err)
 	}
 
 	stream, err := sandbox.ShellStream(ctx, "./run.sh", msb.WithExecEnv(config.Env))
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	waitCh := make(chan int)
-
+	exitCh := make(chan sandboxExit, 1)
 	go func() {
-		code, err := stream.Wait(ctx)
+		code, err := stream.Wait(context.Background())
 		if err != nil {
-			waitCh <- -1
+			exitCh <- sandboxExit{ExitCode: -1, Err: err}
 		} else {
-			waitCh <- code
+			exitCh <- sandboxExit{ExitCode: code}
 		}
+		close(exitCh)
 	}()
 
-	// wait 5 seconds to see if sandbox startup fails, if it doesn't it's probably fine
-	select {
-	case exitCode := <-waitCh:
-		return fmt.Errorf("sandbox exited early with exit code %d", exitCode)
-	case <-time.After(5 * time.Second):
-		return nil
-	}
+	return exitCh, nil
 }
 
 func (b *msbBackend) GetSandbox(ctx context.Context, name string) (sandbox, error) {
@@ -141,11 +143,12 @@ func (s *msbSandbox) Metrics(ctx context.Context) (*Metrics, error) {
 
 type stubBackend struct {
 	sandboxes syncMap[string, sandboxConfig]
+	exitCh    chan sandboxExit
 }
 
-func (b *stubBackend) CreateSandbox(ctx context.Context, name string, config sandboxConfig) error {
+func (b *stubBackend) CreateSandbox(ctx context.Context, name string, config sandboxConfig) (<-chan sandboxExit, error) {
 	b.sandboxes.Store(name, config)
-	return nil
+	return b.exitCh, nil
 }
 
 func (b *stubBackend) GetSandbox(ctx context.Context, name string) (sandbox, error) {
@@ -191,11 +194,16 @@ func (s *stubSandbox) Metrics(ctx context.Context) (*Metrics, error) {
 }
 
 func newMSBManager(scalesetClient scalesetClient, scaleSetID int) *sandboxManager {
-	return &sandboxManager{
+	m := &sandboxManager{
 		backend:        &msbBackend{},
 		scalesetClient: scalesetClient,
 		scaleSetID:     scaleSetID,
+		doneCh:         make(chan struct{}),
+		closeOnce:      &sync.Once{},
 	}
+	go m.startMetrics()
+
+	return m
 }
 
 type scalesetClient interface {
@@ -207,6 +215,8 @@ type sandboxManager struct {
 	sandboxes      syncMap[string, struct{}]
 	scalesetClient scalesetClient
 	scaleSetID     int
+	doneCh         chan struct{}
+	closeOnce      *sync.Once
 }
 
 func (m *sandboxManager) Metrics(ctx context.Context) map[string]*Metrics {
@@ -227,11 +237,49 @@ func (m *sandboxManager) Metrics(ctx context.Context) map[string]*Metrics {
 	return result
 }
 
+func (m *sandboxManager) UpdateMetrics(ctx context.Context) {
+	for name, sandboxMetrics := range m.Metrics(ctx) {
+		metrics.SandboxCPUPercent.
+			WithLabelValues(name).
+			Set(sandboxMetrics.CPUPercent)
+		metrics.SandboxMemoryBytes.
+			WithLabelValues(name).
+			Set(float64(sandboxMetrics.MemoryBytes))
+		metrics.SandboxMemoryLimitBytes.
+			WithLabelValues(name).
+			Set(float64(sandboxMetrics.MemoryLimitBytes))
+		metrics.SandboxDiskReadBytes.
+			WithLabelValues(name).
+			Set(float64(sandboxMetrics.DiskReadBytes))
+		metrics.SandboxDiskWriteBytes.
+			WithLabelValues(name).
+			Set(float64(sandboxMetrics.DiskWriteBytes))
+		metrics.SandboxNetRxBytes.
+			WithLabelValues(name).
+			Set(float64(sandboxMetrics.NetRxBytes))
+		metrics.SandboxNetTxBytes.
+			WithLabelValues(name).
+			Set(float64(sandboxMetrics.NetTxBytes))
+		metrics.SandboxUptimeMs.
+			WithLabelValues(name).
+			Set(float64(sandboxMetrics.Uptime.Milliseconds()))
+		metrics.SandboxTimestampMs.
+			WithLabelValues(name).
+			Set(float64(time.Now().UnixMilli()))
+	}
+}
+
 func (s *sandboxManager) Count() int {
 	return s.sandboxes.Len()
 }
 
 func (s *sandboxManager) Shutdown(ctx context.Context) error {
+	if s.closeOnce != nil {
+		s.closeOnce.Do(func() {
+			close(s.doneCh)
+		})
+	}
+
 	for name := range s.sandboxes.Iter() {
 		if err := s.Destroy(ctx, name); err != nil {
 			return err
@@ -244,10 +292,15 @@ func (s *sandboxManager) Shutdown(ctx context.Context) error {
 func (s *sandboxManager) Spawn(ctx context.Context, config sandboxConfig) (string, error) {
 	name := config.Name
 
-	if err := s.backend.CreateSandbox(ctx, config.Name, config); err != nil {
+	exitCh, err := s.backend.CreateSandbox(ctx, config.Name, config)
+	if err != nil {
 		return "", err
 	}
 	s.sandboxes.Store(name, struct{}{})
+
+	if exitCh != nil {
+		go s.supervise(name, exitCh)
+	}
 
 	return name, nil
 }
@@ -262,8 +315,6 @@ func (s *sandboxManager) Destroy(ctx context.Context, name string) error {
 		return err
 	}
 
-	defer s.sandboxes.Delete(name)
-
 	if err := sandbox.Stop(ctx); err != nil {
 		return err
 	}
@@ -271,5 +322,61 @@ func (s *sandboxManager) Destroy(ctx context.Context, name string) error {
 		return err
 	}
 
+	s.sandboxes.Delete(name)
+
+	time.AfterFunc(30*time.Second, func() {
+		s.destroyMetrics(name)
+	})
+
 	return nil
+}
+
+func (m *sandboxManager) destroyMetrics(name string) {
+	metrics.SandboxCPUPercent.DeleteLabelValues(name)
+	metrics.SandboxMemoryBytes.DeleteLabelValues(name)
+	metrics.SandboxMemoryLimitBytes.DeleteLabelValues(name)
+	metrics.SandboxDiskReadBytes.DeleteLabelValues(name)
+	metrics.SandboxDiskWriteBytes.DeleteLabelValues(name)
+	metrics.SandboxNetRxBytes.DeleteLabelValues(name)
+	metrics.SandboxNetTxBytes.DeleteLabelValues(name)
+	metrics.SandboxUptimeMs.DeleteLabelValues(name)
+	metrics.SandboxTimestampMs.DeleteLabelValues(name)
+}
+
+func (m *sandboxManager) startMetrics() {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			m.UpdateMetrics(context.Background())
+		case <-m.doneCh:
+			return
+		}
+	}
+}
+
+func (s *sandboxManager) supervise(name string, exitCh <-chan sandboxExit) {
+	exit, ok := <-exitCh
+	if !ok {
+		return
+	}
+	if _, ok := s.sandboxes.Load(name); !ok {
+		return
+	}
+
+	log := slog.With("runner_name", name, "exit_code", exit.ExitCode)
+	if exit.Err != nil {
+		log.Warn("sandbox process exited", "error", exit.Err)
+	} else {
+		log.Info("sandbox process exited")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if err := s.Destroy(ctx, name); err != nil {
+		log.Warn("failed to destroy exited sandbox", "error", err)
+	}
 }
