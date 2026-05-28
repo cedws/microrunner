@@ -3,11 +3,48 @@ package microrunner
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/actions/scaleset"
 	msb "github.com/superradcompany/microsandbox/sdk/go"
 )
+
+var defaultDomains = []string{
+	"github.com",
+	"api.github.com",
+	"*.actions.githubusercontent.com",
+	"codeload.github.com",
+	"results-receiver.actions.githubusercontent.com",
+	"*.blob.core.windows.net",
+	"objects.githubusercontent.com",
+	"objects-origin.githubusercontent.com",
+	"github-releases.githubusercontent.com",
+	"github-registry-files.githubusercontent.com",
+	"*.pkg.github.com",
+	"pkg-containers.githubusercontent.com",
+	"ghcr.io",
+	"github-cloud.githubusercontent.com",
+	"github-cloud.s3.amazonaws.com",
+	"dependabot-actions.githubapp.com",
+	"release-assets.githubusercontent.com",
+	"api.snapcraft.io",
+}
+
+func makePolicyRules() []msb.PolicyRule {
+	var rules []msb.PolicyRule
+
+	for _, d := range defaultDomains {
+		rules = append(rules, msb.PolicyRule{
+			Action:      msb.PolicyActionAllow,
+			Direction:   msb.PolicyDirectionEgress,
+			Destination: strings.TrimPrefix(d, "*"),
+			Port:        "443",
+		})
+	}
+
+	return rules
+}
 
 var _ sandboxBackend = (*msbBackend)(nil)
 var _ sandboxBackend = (*stubBackend)(nil)
@@ -46,6 +83,10 @@ func (b *msbBackend) CreateSandbox(ctx context.Context, name string, config sand
 		msb.WithImage(config.Image),
 		msb.WithHostname(name),
 		msb.WithReplace(),
+		msb.WithNetwork(&msb.NetworkConfig{
+			Rules:         makePolicyRules(),
+			DefaultEgress: msb.PolicyActionDeny,
+		}),
 	}
 
 	sandbox, err := msb.CreateSandbox(ctx, name, opts...)
@@ -69,6 +110,7 @@ func (b *msbBackend) CreateSandbox(ctx context.Context, name string, config sand
 		}
 	}()
 
+	// wait 5 seconds to see if sandbox startup fails, if it doesn't it's probably fine
 	select {
 	case exitCode := <-waitCh:
 		return fmt.Errorf("sandbox exited early with exit code %d", exitCode)

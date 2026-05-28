@@ -43,7 +43,11 @@ func Start(ctx context.Context, config Config) error {
 	if err := msbPreflight(ctx); err != nil {
 		return fmt.Errorf("msb preflight check failed: %w", err)
 	}
-	slog.Info("sandbox preflight check passed")
+	var (
+		runtimeVersion, _ = msb.RuntimeVersion()
+		sdkVersion        = msb.SDKVersion()
+	)
+	slog.Info("sandbox preflight check passed", "msb_runtime_version", runtimeVersion, "msb_sdk_version", sdkVersion)
 
 	if err := config.Validate(); err != nil {
 		return err
