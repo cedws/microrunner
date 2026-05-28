@@ -25,7 +25,7 @@ type cli struct {
 	Image           string
 	CPUMatrix       []int  `default:"2,4"`
 	MemoryMatrix    []int  `default:"1,2"`
-	GitHubToken     string `name:"github-token" env:"GITHUB_TOKEN" required:"true"`
+	GitHubToken     string `kong:"-"`
 	MaxRunners      int    `default:"10"`
 	Debug           bool
 	Start           startCmd   `cmd:"" default:"1" name:"start"`
@@ -61,5 +61,9 @@ func Execute() {
 	var cli cli
 
 	ctx := kong.Parse(&cli, kong.Name("microrunner"), kong.UsageOnError())
+	cli.GitHubToken = os.Getenv("GITHUB_TOKEN")
+	if cli.GitHubToken == "" {
+		ctx.FatalIfErrorf(fmt.Errorf("GITHUB_TOKEN is required"))
+	}
 	ctx.FatalIfErrorf(ctx.Run())
 }
