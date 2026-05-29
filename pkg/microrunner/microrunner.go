@@ -32,29 +32,6 @@ func logsDir() string {
 	return filepath.Join(dir, ".local", "state", "microrunner")
 }
 
-type LabelMatrix struct {
-	CPU       []int
-	MemoryMiB []int
-}
-
-type Config struct {
-	GitHubToken     string
-	GitHubConfigURL string
-	MetricsAddr     string
-	Prefix          string
-	Image           string
-	LabelMatrix     LabelMatrix
-	MaxRunners      int
-	Debug           bool
-}
-
-func (c Config) Validate() error {
-	if c.Prefix == "" {
-		return fmt.Errorf("prefix is required")
-	}
-	return nil
-}
-
 func Start(ctx context.Context, config Config) error {
 	if err := msbPreflight(ctx); err != nil {
 		return fmt.Errorf("msb preflight check failed: %w", err)
@@ -68,6 +45,9 @@ func Start(ctx context.Context, config Config) error {
 	if err := config.Validate(); err != nil {
 		return err
 	}
+
+	useDefault := config.Egress.UseDefaultRules == nil || *config.Egress.UseDefaultRules
+	slog.Info("loaded egress rules", "use_default", useDefault, "rules", len(config.Egress.Rules))
 
 	ssClient, err := scaleset.NewClientWithPersonalAccessToken(scaleset.NewClientWithPersonalAccessTokenConfig{
 		GitHubConfigURL:     config.GitHubConfigURL,
@@ -83,7 +63,7 @@ func Start(ctx context.Context, config Config) error {
 		return err
 	}
 
-	vmconfigs := makeVMConfigs(config.LabelMatrix, config.Prefix, config.Image)
+	vmconfigs := makeVMConfigs(config.LabelMatrix, config.Prefix, config.Image, config.Egress)
 
 	errGroup, ctx := errgroup.WithContext(ctx)
 
@@ -212,9 +192,10 @@ type vmconfig struct {
 	image  string
 	cpu    int
 	memory int
+	egress EgressConfig
 }
 
-func makeVMConfigs(matrix LabelMatrix, prefix string, image string) []vmconfig {
+func makeVMConfigs(matrix LabelMatrix, prefix string, image string, egress EgressConfig) []vmconfig {
 	var vmconfigs []vmconfig
 
 	for _, cpu := range matrix.CPU {
@@ -224,6 +205,7 @@ func makeVMConfigs(matrix LabelMatrix, prefix string, image string) []vmconfig {
 				image:  image,
 				cpu:    cpu,
 				memory: mem,
+				egress: egress,
 			})
 		}
 	}

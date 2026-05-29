@@ -76,6 +76,7 @@ type sandboxConfig struct {
 	Env       map[string]string
 	Prefix    string
 	Labels    []string
+	Egress    EgressConfig
 }
 
 type sandboxBackend interface {
@@ -96,6 +97,8 @@ type Metrics struct {
 type msbBackend struct{}
 
 func (b *msbBackend) CreateSandbox(ctx context.Context, name string, config sandboxConfig) (<-chan sandboxExit, error) {
+	egressRules := makePolicyRules(config.Egress)
+
 	opts := []msb.SandboxOption{
 		msb.WithCPUs(config.CPU),
 		msb.WithMemory(config.MemoryMiB),
@@ -103,7 +106,7 @@ func (b *msbBackend) CreateSandbox(ctx context.Context, name string, config sand
 		msb.WithHostname(name),
 		msb.WithReplace(),
 		msb.WithNetwork(&msb.NetworkConfig{
-			Rules:         makePolicyRules(),
+			Rules:         egressRules,
 			DefaultEgress: msb.PolicyActionDeny,
 		}),
 	}

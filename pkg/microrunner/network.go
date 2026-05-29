@@ -27,15 +27,26 @@ var defaultDomains = []string{
 	"api.snapcraft.io",
 }
 
-func makePolicyRules() []msb.PolicyRule {
+func makePolicyRules(egress EgressConfig) []msb.PolicyRule {
 	var rules []msb.PolicyRule
 
-	for _, d := range defaultDomains {
+	if egress.UseDefaultRules == nil || *egress.UseDefaultRules {
+		for _, d := range defaultDomains {
+			rules = append(rules, msb.PolicyRule{
+				Action:      msb.PolicyActionAllow,
+				Direction:   msb.PolicyDirectionEgress,
+				Destination: strings.TrimPrefix(d, "*"),
+				Port:        "443",
+			})
+		}
+	}
+
+	for _, rule := range egress.Rules {
 		rules = append(rules, msb.PolicyRule{
-			Action:      msb.PolicyActionAllow,
-			Direction:   msb.PolicyDirectionEgress,
-			Destination: strings.TrimPrefix(d, "*"),
-			Port:        "443",
+			Action:      rule.Action,
+			Direction:   rule.PolicyDirection,
+			Destination: rule.Destination,
+			Port:        rule.Port,
 		})
 	}
 
