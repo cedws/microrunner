@@ -21,8 +21,9 @@ func (v *versionCmd) Run() error {
 
 type cli struct {
 	GitHubConfigURL string `name:"github-config-url" required:"true"`
+	MetricsAddr     string `help:"Listen address to serve prometheus metrics on"`
 	Prefix          string `default:"microrunner"`
-	Image           string
+	Image           string `required:"true"`
 	CPUMatrix       []int  `default:"2,4"`
 	MemoryMatrix    []int  `default:"1,2"`
 	GitHubToken     string `kong:"-"`
@@ -41,6 +42,7 @@ func (s *startCmd) Run(cli *cli) error {
 	err := microrunner.Start(ctx, microrunner.Config{
 		GitHubToken:     cli.GitHubToken,
 		GitHubConfigURL: cli.GitHubConfigURL,
+		MetricsAddr:     cli.MetricsAddr,
 		Prefix:          cli.Prefix,
 		Image:           cli.Image,
 		LabelMatrix: microrunner.LabelMatrix{

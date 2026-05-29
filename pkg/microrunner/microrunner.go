@@ -40,6 +40,7 @@ type LabelMatrix struct {
 type Config struct {
 	GitHubToken     string
 	GitHubConfigURL string
+	MetricsAddr     string
 	Prefix          string
 	Image           string
 	LabelMatrix     LabelMatrix
@@ -92,14 +93,16 @@ func Start(ctx context.Context, config Config) error {
 		})
 	}
 
-	errGroup.Go(func() error {
-		return startMetricsServer(ctx)
-	})
+	if config.MetricsAddr != "" {
+		errGroup.Go(func() error {
+			return startMetricsServer(ctx, config.MetricsAddr)
+		})
+	}
 
 	return errGroup.Wait()
 }
 
-func startMetricsServer(ctx context.Context) error {
+func startMetricsServer(ctx context.Context, addr string) error {
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.HandlerFor(
 		prometheus.DefaultGatherer,
@@ -109,7 +112,7 @@ func startMetricsServer(ctx context.Context) error {
 	))
 
 	srv := &http.Server{
-		Addr:    ":8080",
+		Addr:    addr,
 		Handler: mux,
 	}
 
