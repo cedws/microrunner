@@ -199,7 +199,7 @@ func makeVMConfigs(matrix LabelMatrix, prefix string, image string, egress Egres
 	var vmconfigs []vmconfig
 
 	for _, cpu := range matrix.CPU {
-		for _, mem := range matrix.MemoryMiB {
+		for _, mem := range matrix.Memory {
 			vmconfigs = append(vmconfigs, vmconfig{
 				label:  scaleset.Label{Name: fmt.Sprintf("%s-%dc-%dg", prefix, cpu, mem)},
 				image:  image,

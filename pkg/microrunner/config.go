@@ -7,8 +7,8 @@ import (
 )
 
 type LabelMatrix struct {
-	CPU       []int `json:"cpu" kong:"name='cpu-matrix',default='2,4'" default:"[2,4]"`
-	MemoryMiB []int `json:"memoryMiB" kong:"name='memory-matrix',default='1,2'" default:"[1,2]"`
+	CPU    []int `json:"cpu" kong:"name='cpu-matrix',default='2,4'" default:"[2,4]"`
+	Memory []int `json:"memory" kong:"name='memory-matrix',default='1,2'" default:"[1,2]"`
 }
 
 type Config struct {
