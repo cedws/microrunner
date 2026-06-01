@@ -134,10 +134,10 @@ func msbPreflight(ctx context.Context) error {
 }
 
 func createScaleSet(ctx context.Context, ssClient *scaleset.Client, config Config, vmconfig vmconfig) error {
-	sset, err := ssClient.GetRunnerScaleSet(ctx, 1, vmconfig.label.Name)
+	sset, err := ssClient.GetRunnerScaleSet(ctx, config.RunnerGroupID, vmconfig.label.Name)
 	if err != nil || sset == nil {
 		sset, err = ssClient.CreateRunnerScaleSet(ctx, &scaleset.RunnerScaleSet{
-			RunnerGroupID: 1,
+			RunnerGroupID: config.RunnerGroupID,
 			Name:          vmconfig.label.Name,
 			Labels:        []scaleset.Label{vmconfig.label},
 		})

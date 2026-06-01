@@ -21,6 +21,7 @@ type Config struct {
 	MaxRunners      int          `json:"maxRunners" default:"10"`
 	MetricsAddr     string       `json:"metricsAddr" help:"Listen address to serve prometheus metrics on."`
 	Prefix          string       `json:"prefix" default:"microrunner"`
+	RunnerGroupID   int          `json:"runnerGroupID" name:"runner-group-id" default:"1"`
 }
 
 type EgressConfig struct {
