@@ -32,56 +32,6 @@ func logsDir() string {
 	return filepath.Join(dir, ".local", "state", "microrunner")
 }
 
-func Start(ctx context.Context, config Config) error {
-	if err := msbPreflight(ctx); err != nil {
-		return fmt.Errorf("msb preflight check failed: %w", err)
-	}
-	var (
-		runtimeVersion, _ = msb.RuntimeVersion()
-		sdkVersion        = msb.SDKVersion()
-	)
-	slog.Info("sandbox preflight check passed", "msb_runtime_version", runtimeVersion, "msb_sdk_version", sdkVersion)
-
-	if err := config.Validate(); err != nil {
-		return err
-	}
-
-	useDefault := config.Egress.UseDefaultRules == nil || *config.Egress.UseDefaultRules
-	slog.Info("loaded egress rules", "use_default", useDefault, "rules", len(config.Egress.Rules))
-
-	ssClient, err := scaleset.NewClientWithPersonalAccessToken(scaleset.NewClientWithPersonalAccessTokenConfig{
-		GitHubConfigURL:     config.GitHubConfigURL,
-		PersonalAccessToken: config.GitHubToken,
-		SystemInfo: scaleset.SystemInfo{
-			System:    "listener",
-			Subsystem: "microrunner",
-			CommitSHA: version.Commit(),
-			Version:   version.Version(),
-		},
-	})
-	if err != nil {
-		return err
-	}
-
-	vmconfigs := makeVMConfigs(config.LabelMatrix, config.Prefix, config.Image, config.Egress)
-
-	errGroup, ctx := errgroup.WithContext(ctx)
-
-	for _, vmconfig := range vmconfigs {
-		errGroup.Go(func() error {
-			return createScaleSet(ctx, ssClient, config, vmconfig)
-		})
-	}
-
-	if config.MetricsAddr != "" {
-		errGroup.Go(func() error {
-			return startMetricsServer(ctx, config.MetricsAddr)
-		})
-	}
-
-	return errGroup.Wait()
-}
-
 func startMetricsServer(ctx context.Context, addr string) error {
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.HandlerFor(
@@ -118,6 +68,7 @@ func msbPreflight(ctx context.Context) error {
 		msb.WithMaxDuration(10 * time.Second),
 		msb.WithMemory(128),
 		msb.WithReplace(),
+		msb.WithLabels(defaultSandboxLabels),
 	}
 	sandbox, err := msb.CreateSandbox(ctx, "microrunner", opts...)
 	if err != nil {
@@ -211,4 +162,73 @@ func makeVMConfigs(matrix LabelMatrix, prefix string, image string, egress Egres
 	}
 
 	return vmconfigs
+}
+
+func Start(ctx context.Context, config Config) error {
+	if err := msbPreflight(ctx); err != nil {
+		return fmt.Errorf("msb preflight check failed: %w", err)
+	}
+	var (
+		runtimeVersion, _ = msb.RuntimeVersion()
+		sdkVersion        = msb.SDKVersion()
+	)
+	slog.Info("sandbox preflight check passed", "msb_runtime_version", runtimeVersion, "msb_sdk_version", sdkVersion)
+
+	if err := config.Validate(); err != nil {
+		return err
+	}
+
+	useDefault := config.Egress.UseDefaultRules == nil || *config.Egress.UseDefaultRules
+	slog.Info("loaded egress rules", "use_default", useDefault, "rules", len(config.Egress.Rules))
+
+	ssClient, err := scaleset.NewClientWithPersonalAccessToken(scaleset.NewClientWithPersonalAccessTokenConfig{
+		GitHubConfigURL:     config.GitHubConfigURL,
+		PersonalAccessToken: config.GitHubToken,
+		SystemInfo: scaleset.SystemInfo{
+			System:    "listener",
+			Subsystem: "microrunner",
+			CommitSHA: version.Commit(),
+			Version:   version.Version(),
+		},
+	})
+	if err != nil {
+		return err
+	}
+
+	vmconfigs := makeVMConfigs(config.LabelMatrix, config.Prefix, config.Image, config.Egress)
+
+	errGroup, ctx := errgroup.WithContext(ctx)
+
+	for _, vmconfig := range vmconfigs {
+		errGroup.Go(func() error {
+			return createScaleSet(ctx, ssClient, config, vmconfig)
+		})
+	}
+
+	if config.MetricsAddr != "" {
+		errGroup.Go(func() error {
+			return startMetricsServer(ctx, config.MetricsAddr)
+		})
+	}
+
+	return errGroup.Wait()
+}
+
+func Prune(ctx context.Context) error {
+	sandboxes, err := msb.ListSandboxesWith(ctx, msb.NewSandboxFilter().WithLabels(defaultSandboxLabels))
+	if err != nil {
+		return err
+	}
+
+	for _, sandbox := range sandboxes {
+		slog.Info("stopping and removing sandbox", "name", sandbox.Name())
+		if err := sandbox.Stop(ctx); err != nil {
+			return err
+		}
+		if err := sandbox.Remove(ctx); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }

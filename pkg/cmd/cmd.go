@@ -17,6 +17,7 @@ type cli struct {
 
 	Start      startCmd      `cmd:"" default:"1" name:"start"`
 	Version    versionCmd    `cmd:"" name:"version"`
+	Prune      pruneCmd      `cmd:"" name:"prune"`
 	JSONSchema jsonschemaCmd `cmd:"" name:"jsonschema" help:"Print config JSON schema"`
 }
 

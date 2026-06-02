@@ -14,6 +14,10 @@ import (
 	"go.cedwards.xyz/microrunner/pkg/metrics"
 )
 
+var defaultSandboxLabels = map[string]string{
+	"owner": "microrunner",
+}
+
 type sandboxMetricsRecorder struct{}
 
 func (r *sandboxMetricsRecorder) Record(name string, sandboxMetrics *Metrics) {
@@ -105,6 +109,7 @@ func (b *msbBackend) CreateSandbox(ctx context.Context, name string, config sand
 		msb.WithImage(config.Image),
 		msb.WithHostname(name),
 		msb.WithReplace(),
+		msb.WithLabels(defaultSandboxLabels),
 		msb.WithNetwork(&msb.NetworkConfig{
 			Rules:         egressRules,
 			DefaultEgress: msb.PolicyActionDeny,
