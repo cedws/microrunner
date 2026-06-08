@@ -8,7 +8,7 @@ require (
 	github.com/alecthomas/kong v1.15.0
 	github.com/google/uuid v1.6.0
 	github.com/prometheus/client_golang v1.23.2
-	github.com/superradcompany/microsandbox/sdk/go v0.5.0
+	github.com/superradcompany/microsandbox/sdk/go v0.5.5
 	github.com/swaggest/jsonschema-go v0.3.79
 	golang.org/x/sync v0.20.0
 )
