@@ -89,7 +89,7 @@ type sandboxBackend interface {
 }
 
 type sandbox interface {
-	Stop(ctx context.Context) error
+	Stop(ctx context.Context, opts ...msb.StopOption) error
 	Remove(ctx context.Context) error
 	Metrics(ctx context.Context) (*Metrics, error)
 }
@@ -187,7 +187,7 @@ type stubSandbox struct {
 	deleteFunc func()
 }
 
-func (s *stubSandbox) Stop(ctx context.Context) error {
+func (s *stubSandbox) Stop(ctx context.Context, opts ...msb.StopOption) error {
 	return nil
 }
 

@@ -74,7 +74,7 @@ func msbPreflight(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if _, err := sandbox.StopAndWait(ctx); err != nil {
+	if err := sandbox.Stop(ctx); err != nil {
 		return err
 	}
 	if err := sandbox.Close(); err != nil {
